@@ -74,7 +74,7 @@ def hammering_distance(a, b):
 '''
 returns a list of labels for the query dataset based upon labeled observations in the train dataset.
 metric is a string specifying either "euclidean" or "cosim".  
-All hyper-parameters should be hard-coded in the algorithm.
+All hyper-parameters should be hard-coded in the algorithm
 '''
 # Define k-NN function
 def knn(train, query, metri="euclidean", K=5, n_comp=50):
