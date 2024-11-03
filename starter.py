@@ -8,6 +8,8 @@ from collections import defaultdict
 import pandas as pd
 from scipy.spatial.distance import cosine, euclidean
 from scipy.stats import pearsonr
+from sklearn.metrics import confusion_matrix
+from sklearn.impute import SimpleImputer
 
 '''
 returns Euclidean distance between vectors a and b
@@ -74,84 +76,55 @@ returns a list of labels for the query dataset based upon labeled observations i
 metric is a string specifying either "euclidean" or "cosim".  
 All hyper-parameters should be hard-coded in the algorithm.
 '''
-def knn(train,query,metri, K = 5, n_comp = 50):
+# Define k-NN function
+def knn(train, query, metri="euclidean", K=5, n_comp=50):
+    # Choose distance function
     if metri.lower() == "euclidean":
-        dist_func = euclidean
-    else:
-        dist_func = cosim
-    labels = []
-    for idx in range(len(train)):
-        train[idx] = [int(train[idx][0]), [int(item) for item in train[idx][1]]]
-    # convert all string type data to integer
-    train_data = np.array([list(map(int, t[1])) for t in train])
-    train_label = np.array([int(t[0]) for t in train])
-    query_data = np.array([list(map(int, q[1])) for q in query])
-
-     # Apply PCA to reduce dimensionality
-    pca = PCA(n_components = n_comp)
-    train_data_reduced = pca.fit_transform(train_data)
-    query_data_reduced = pca.transform(query_data)
-
-    for q in query_data_reduced:
-        # for each data in query, compute distance from each train dataset.
-        distances_from_train =[dist_func(t, q) for t in train_data_reduced]
-        # sorted the indices of train data by the distance.
-        k_nearest_index = sorted(range(len(distances_from_train)), key = lambda i : distances_from_train[i])[:K]
-        # find the nearest label based on the index found.
-        k_nearest_labels = [train_label[index] for index in k_nearest_index]
-        # use Counter function from collection package to predict the most possible label by majority vote.
-        most_common_label = Counter(k_nearest_labels).most_common(1)[0][0]
-        labels.append(most_common_label)
-
-    return(labels)
-
-'''
-returns a list of labels for the query dataset based upon observations in the train dataset. 
-labels should be ignored in the training set
-metric is a string specifying either "euclidean" or "cosim".  
-All hyper-parameters should be hard-coded in the algorithm.
-'''
-def kmeans(train, query, metric, num_clusters=5, max_iterations=100):
-    # Select distance function based on metric
-    if metric.lower() == "euclidean":
-        dist_func = euclidean
-    else:
-        dist_func = cosim
-
-    # Initialize centroids randomly from the training data
-    train_data = np.array([list(map(int, t[1])) for t in train])
-    centroids = train_data[np.random.choice(len(train_data), num_clusters, replace=False)]
+        dist_func = lambda x, y: np.linalg.norm(x - y)
+    else:  # Cosine similarity
+        dist_func = lambda x, y: 1 - np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
     
-    for _ in range(max_iterations):
-        # Step 1: Assign each query point to the nearest centroid
-        clusters = [[] for _ in range(num_clusters)]
-        for point in train_data:
-            distances = [dist_func(point, centroid) for centroid in centroids]
-            nearest_centroid_idx = np.argmin(distances)
-            clusters[nearest_centroid_idx].append(point)
-        
-        # Step 2: Update centroids by calculating the mean of assigned points
-        new_centroids = []
-        for cluster in clusters:
-            if cluster:  # Avoid empty clusters
-                new_centroid = np.mean(cluster, axis=0)
-                new_centroids.append(new_centroid)
-            else:
-                new_centroids.append(centroids[np.random.choice(len(centroids))])
-        
-        # Check for convergence (if centroids do not change)
-        if np.all([np.allclose(new, old) for new, old in zip(new_centroids, centroids)]):
-            break
-        centroids = new_centroids
+    # Separate features and labels in the training and query datasets
+    train_data = np.array([sample[1:] for sample in train])
+    train_labels = np.array([sample[0] for sample in train])
+    query_data = np.array([sample[1:] for sample in query])
+    
+    # Handle missing values by imputing with the mean
+    imputer = SimpleImputer(strategy='mean')
+    train_data = imputer.fit_transform(train_data)
+    query_data = imputer.transform(query_data)
+    
+    # Apply PCA if specified
+    if n_comp < 784:
+        pca = PCA(n_components=n_comp)
+        train_data = pca.fit_transform(train_data)
+        query_data = pca.transform(query_data)
+    
+    # Perform k-NN classification
+    predictions = []
+    for q in query_data:
+        # Compute distances from query to each training sample
+        distances = [dist_func(q, t) for t in train_data]
+        # Get indices of the K nearest neighbors
+        k_nearest_indices = np.argsort(distances)[:K]
+        # Find the labels of these neighbors
+        k_nearest_labels = train_labels[k_nearest_indices]
+        # Predict the most common label among the nearest neighbors
+        most_common_label = Counter(k_nearest_labels).most_common(1)[0][0]
+        predictions.append(most_common_label)
+    
+    return predictions
 
-    # Assign labels to query points based on nearest centroid
-    labels = []
-    for q in query:
-        distances = [dist_func(list(map(int, q[1])), centroid) for centroid in centroids]
-        nearest_centroid_idx = np.argmin(distances)
-        labels.append(nearest_centroid_idx)
-
-    return labels
+# Evaluation function to generate confusion matrix
+def evaluate_knn(train, test, metri="euclidean", K=5, n_comp=50):
+    predictions = knn(train, test, metri, K, n_comp)
+    true_labels = [sample[0] for sample in test]
+    
+    # Generate confusion matrix
+    cm = confusion_matrix(true_labels, predictions, labels=range(10))
+    cm_df = pd.DataFrame(cm, index=range(10), columns=range(10))
+    print("Confusion Matrix:")
+    print(cm_df)
 
 
 '''
@@ -290,7 +263,15 @@ def main():
     # print(read_movie_data("train_a.txt"))
     # print(user_similarity(read_data("train_a.txt"), 405 ))
     # Load training, validation, and test data
-    
+    train_data = pd.read_csv('mnist_train.csv').values.tolist()  # Replace with actual file path
+    test_data = pd.read_csv('mnist_test.csv').values.tolist()    # Replace with actual file path
+    validate_data = pd.read_csv('mnist_valid.csv').values.tolist()  # Replace with actual file path
+
+    evaluate_knn(train_data, test_data, metri="euclidean", K=5, n_comp=50)
+    evaluate_knn(train_data, validate_data, metri="cosine", K=5, n_comp=50)
+
+    confusion_matrix_euclidean = evaluate_knn(train_data, test_data, 'euclidean')
+    confusion_matrix_cosine = evaluate_knn(train_data, test_data, 'cosine')
     # Load target user and other users
     target_user = train_b  # Replace 405 with desired user_id
     other_users = train_c
@@ -301,9 +282,9 @@ def main():
     recommendations = recommend_movies(405, other_users, top_k_users)
     
     # Print recommendations
-    print("Recommended movies for user 405:")
-    for movie_name, score in recommendations:
-        print(f"Movie name: {movie_name}, Score: {score}")
+    # print("Recommended movies for user 405:")
+    # for movie_name, score in recommendations:
+    #     print(f"Movie name: {movie_name}, Score: {score}")
 if __name__ == "__main__":
     main()
     
